@@ -541,3 +541,58 @@ body {
 }
 
 /* ===== SUBMIT MESSAGE ===== */
+.submit-msg {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.msg-success {
+  background: var(--found-soft);
+  color: var(--found);
+  border: 1px solid var(--found);
+}
+
+.msg-error {
+  background: var(--lost-soft);
+  color: var(--lost);
+  border: 1px solid var(--lost);
+}
+
+.submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ===== REQUIRED NOTE ===== */
+.required-note {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 600px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .items-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .tab-bar {
+    width: 100%;
+  }
+
+  .tab-btn {
+    flex: 1;
+    justify-content: center;
+  }
+}

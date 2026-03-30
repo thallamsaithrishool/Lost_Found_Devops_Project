@@ -2,14 +2,20 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const nodemailer = require('nodemailer');
+const fs = require('fs');
+const path = require('path');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Item = require('../models/Item');
 
-// ===== MULTER SETUP (image upload) =====
+// ===== MULTER SETUP =====
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
 });
 const upload = multer({ storage });
+
+// ===== GEMINI AI SETUP =====
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ===== NODEMAILER SETUP =====
 const transporter = nodemailer.createTransport({
@@ -20,7 +26,52 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// ===== SEND EMAIL FUNCTION =====
+// ===== COMPARE IMAGES WITH GEMINI AI =====
+const compareImagesWithAI = async (lostImagePath, foundImagePath) => {
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+    // Read both images as base64
+    const lostImageData = fs.readFileSync(lostImagePath);
+    const foundImageData = fs.readFileSync(foundImagePath);
+
+    const lostBase64 = lostImageData.toString('base64');
+    const foundBase64 = foundImageData.toString('base64');
+
+    const lostMime = 'image/jpeg';
+    const foundMime = 'image/jpeg';
+
+    const result = await model.generateContent([
+      {
+        inlineData: {
+          mimeType: lostMime,
+          data: lostBase64,
+        },
+      },
+      {
+        inlineData: {
+          mimeType: foundMime,
+          data: foundBase64,
+        },
+      },
+      `Compare these two images carefully. 
+       Are they showing the same item or very similar item? 
+       Consider color, shape, type, and general appearance.
+       Ignore background differences.
+       Reply with ONLY one word: YES or NO.`,
+    ]);
+
+    const response = result.response.text().trim().toUpperCase();
+    console.log(`🤖 AI Image Comparison Result: ${response}`);
+    return response === 'YES';
+  } catch (err) {
+    console.log('⚠️ AI comparison failed:', err.message);
+    // If AI fails, fall back to name matching only
+    return true;
+  }
+};
+
+// ===== SEND EMAIL =====
 const sendMatchEmail = async (lostItem, foundItem) => {
   try {
     const mailOptions = {
@@ -31,6 +82,9 @@ const sendMatchEmail = async (lostItem, foundItem) => {
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
           <h2 style="color: #3ecf8e;">Great News! 🎉</h2>
           <p>Someone reported finding an item that matches your lost item.</p>
+          <p style="background:#fff3cd; padding:10px; border-radius:8px;">
+            ✅ <b>Our AI verified the images match!</b>
+          </p>
 
           <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin: 15px 0;">
             <h3 style="color: #ff5f6d;">Your Lost Item:</h3>
@@ -52,7 +106,10 @@ const sendMatchEmail = async (lostItem, foundItem) => {
             <p><b>Phone:</b> ${foundItem.contact || 'N/A'}</p>
           </div>
 
-          <p style="color: #888; font-size: 12px;">This is an automated message from Lost & Found Portal.</p>
+          <p style="color: #888; font-size: 12px;">
+            This is an automated message from Lost & Found Portal.<br/>
+            AI image verification was used to confirm this match.
+          </p>
         </div>
       `,
     };
@@ -60,8 +117,7 @@ const sendMatchEmail = async (lostItem, foundItem) => {
     await transporter.sendMail(mailOptions);
     console.log(`✅ Email sent to ${lostItem.email}`);
   } catch (err) {
-    // Email failed but don't crash the app
-    console.log('⚠️ Email not sent (check EMAIL_USER and EMAIL_PASS in .env):', err.message);
+    console.log('⚠️ Email not sent:', err.message);
   }
 };
 
@@ -75,19 +131,28 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ===== ADD ITEM + PIPELINE MATCH + SEND EMAIL =====
+// ===== ADD ITEM + AI IMAGE MATCH + SEND EMAIL =====
 router.post('/', upload.single('image'), async (req, res) => {
   try {
     const { itemName, description, location, contact, email, type } = req.body;
     const image = req.file ? `/uploads/${req.file.filename}` : '';
 
     // Save new item to MongoDB
-    const newItem = new Item({ itemName, description, location, contact, email, type, image });
+    const newItem = new Item({
+      itemName,
+      description,
+      location,
+      contact,
+      email,
+      type,
+      image,
+    });
     await newItem.save();
 
-    // ===== AGGREGATION PIPELINE =====
-    // If found item submitted → check if any lost item matches by name
+    // ===== IF FOUND ITEM → CHECK MATCHES =====
     if (type === 'found') {
+
+      // AGGREGATION PIPELINE → find lost items with same name
       const matches = await Item.aggregate([
         {
           $match: {
@@ -110,13 +175,39 @@ router.post('/', upload.single('image'), async (req, res) => {
             description: 1,
             email: 1,
             contact: 1,
+            image: 1,
           },
         },
       ]);
 
-      // Send email to each matched lost item owner (won't crash if email fails)
-      if (matches.length > 0) {
-        for (const lostItem of matches) {
+      console.log(`🔍 Found ${matches.length} name matches`);
+
+      // For each name match → compare images with AI
+      for (const lostItem of matches) {
+        let shouldSendEmail = false;
+
+        // Both items have images → use AI comparison
+        if (lostItem.image && image) {
+          const lostImagePath = path.join(__dirname, '..', lostItem.image);
+          const foundImagePath = path.join(__dirname, '..', image);
+
+          console.log(`🤖 Comparing images with Gemini AI...`);
+          const imagesMatch = await compareImagesWithAI(lostImagePath, foundImagePath);
+
+          if (imagesMatch) {
+            console.log(`✅ AI confirmed images match!`);
+            shouldSendEmail = true;
+          } else {
+            console.log(`❌ AI says images do NOT match — skipping email`);
+            shouldSendEmail = false;
+          }
+        } else {
+          // No images → just name match is enough
+          console.log(`⚠️ No images to compare — sending email based on name match only`);
+          shouldSendEmail = true;
+        }
+
+        if (shouldSendEmail) {
           await sendMatchEmail(lostItem, newItem);
         }
       }

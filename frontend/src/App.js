@@ -53,6 +53,12 @@ function App() {
     e.preventDefault();
     if (!formData.itemName || !formData.location) return;
 
+    // ===== IMAGE IS REQUIRED =====
+    if (!imageFile) {
+      setSubmitMsg('❌ Please upload an image of the item!');
+      return;
+    }
+
     setLoading(true);
     setSubmitMsg('');
 
@@ -64,7 +70,7 @@ function App() {
       form.append('contact', formData.contact);
       form.append('email', formData.email);
       form.append('type', formData.type);
-      if (imageFile) form.append('image', imageFile);
+      form.append('image', imageFile);
 
       const res = await fetch(API, {
         method: 'POST',
@@ -86,7 +92,7 @@ function App() {
         setImageFile(null);
         setImagePreview(null);
         document.getElementById('imageInput').value = '';
-        fetchItems(); // refresh list from MongoDB
+        fetchItems();
       } else {
         setSubmitMsg('❌ Error submitting item.');
       }
@@ -101,7 +107,7 @@ function App() {
   const handleDelete = async (id) => {
     try {
       await fetch(`${API}/${id}`, { method: 'DELETE' });
-      fetchItems(); // refresh list
+      fetchItems();
     } catch (err) {
       console.error('Delete error:', err);
     }
@@ -219,9 +225,9 @@ function App() {
                   : 'An email will be sent to the owner if we find a matching lost item.'}
               </div>
 
-              {/* Image Upload */}
-              <div className="input-group">
-                <label>Upload Image</label>
+              {/* Image Upload — REQUIRED */}
+              <div className="input-group full-width">
+                <label>Upload Image * <span className="required-note">(Required for AI matching)</span></label>
                 <input
                   id="imageInput"
                   type="file"
