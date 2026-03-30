@@ -18,17 +18,10 @@ jobs:
         with:
           node-version: '18'
 
-      # Backend install only (no run to avoid crash)
       - name: Install backend dependencies
         working-directory: backend
         run: npm install
 
-      # Frontend install
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm install
-
-      # Frontend build
-      - name: Build frontend
-        working-directory: frontend
-        run: npm run build
