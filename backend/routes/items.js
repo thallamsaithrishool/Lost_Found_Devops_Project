@@ -75,7 +75,7 @@ router.post("/", upload.single("image"), async (req, res) => {
     const { itemName, description, location, contact, email, type } =
       req.body;
 
-    // 🔥 FIX: ensure uploads folder exists
+    // Ensure uploads folder exists
     if (!fs.existsSync("uploads")) {
       fs.mkdirSync("uploads");
     }
@@ -94,16 +94,38 @@ router.post("/", upload.single("image"), async (req, res) => {
 
     await newItem.save();
 
-    // ===== MATCH LOGIC =====
+    // ===== AGGREGATION PIPELINE MATCH =====
     if (type === "found") {
-      const lostItems = await Item.find({
-        type: "lost",
-        itemName: { $regex: itemName, $options: "i" },
-      });
+      const matches = await Item.aggregate([
+        {
+          $match: {
+            type: "lost",
+            itemName: { $regex: new RegExp(itemName, "i") },
+          },
+        },
+        {
+          $lookup: {
+            from: "items",
+            localField: "itemName",
+            foreignField: "itemName",
+            as: "matchedFoundItems",
+          },
+        },
+        {
+          $project: {
+            itemName: 1,
+            location: 1,
+            description: 1,
+            email: 1,
+            contact: 1,
+            image: 1,
+          },
+        },
+      ]);
 
-      console.log(`Found ${lostItems.length} possible matches`);
+      console.log(`🔍 Found ${matches.length} possible matches`);
 
-      for (const lostItem of lostItems) {
+      for (const lostItem of matches) {
         let match = true;
 
         if (lostItem.image && image) {
@@ -111,7 +133,9 @@ router.post("/", upload.single("image"), async (req, res) => {
           const p2 = path.join(__dirname, "..", image);
 
           if (fs.existsSync(p1) && fs.existsSync(p2)) {
+            console.log("🤖 Comparing images with Gemini AI...");
             match = await compareImagesWithAI(p1, p2);
+            console.log(`🤖 AI Result: ${match ? "YES ✅" : "NO ❌"}`);
           }
         }
 
@@ -120,13 +144,33 @@ router.post("/", upload.single("image"), async (req, res) => {
             await transporter.sendMail({
               from: process.env.EMAIL_USER,
               to: lostItem.email,
-              subject: "Item Match Found 🎉",
-              text: `Your lost item "${lostItem.itemName}" may be found.`,
+              subject: `🎉 Your lost item "${lostItem.itemName}" may have been found!`,
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                  <h2 style="color: #3ecf8e;">Great News! 🎉</h2>
+                  <p>Someone reported finding an item that matches your lost item.</p>
+                  <p style="background:#fff3cd; padding:10px; border-radius:8px;">
+                    ✅ <b>Our AI verified the images match!</b>
+                  </p>
+                  <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                    <h3 style="color: #ff5f6d;">Your Lost Item:</h3>
+                    <p><b>Item:</b> ${lostItem.itemName}</p>
+                    <p><b>Location:</b> ${lostItem.location}</p>
+                    <p><b>Description:</b> ${lostItem.description || "N/A"}</p>
+                  </div>
+                  <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                    <h3 style="color: #3ecf8e;">Found By:</h3>
+                    <p><b>Email:</b> ${newItem.email}</p>
+                    <p><b>Phone:</b> ${newItem.contact || "N/A"}</p>
+                    <p><b>Found At:</b> ${newItem.location}</p>
+                  </div>
+                  <p style="color: #888; font-size: 12px;">This is an automated message from Lost & Found Portal.</p>
+                </div>
+              `,
             });
-
-            console.log(`Email sent to ${lostItem.email}`);
+            console.log(`✅ Email sent to ${lostItem.email}`);
           } catch (mailErr) {
-            console.log("Email error:", mailErr.message);
+            console.log("⚠️ Email error:", mailErr.message);
           }
         }
       }
@@ -136,6 +180,65 @@ router.post("/", upload.single("image"), async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== DELETE ITEM =====
+router.delete("/:id", async (req, res) => {
+  try {
+    await Item.findByIdAndDelete(req.params.id);
+    res.json({ message: "Item deleted ✅" });
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ===== GET MATCHED ITEMS (pipeline) =====
+router.get("/matches", async (req, res) => {
+  try {
+    const matches = await Item.aggregate([
+      { $match: { type: "lost" } },
+      {
+        $lookup: {
+          from: "items",
+          let: { lostName: "$itemName" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$type", "found"] },
+                    {
+                      $regexMatch: {
+                        input: "$itemName",
+                        regex: "$$lostName",
+                        options: "i",
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+          as: "foundMatches",
+        },
+      },
+      { $match: { "foundMatches.0": { $exists: true } } },
+      {
+        $project: {
+          itemName: 1,
+          location: 1,
+          description: 1,
+          email: 1,
+          contact: 1,
+          foundMatches: 1,
+        },
+      },
+    ]);
+
+    res.json(matches);
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
   }
 });
 

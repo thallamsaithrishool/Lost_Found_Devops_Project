@@ -1,18 +1,19 @@
-require("dotenv").config();
+// Load .env only in development
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 
-const express = require("express");
-const cors = require("cors");
-const path = require("path");
-const fs = require("fs");
-
-const connectDB = require("./config/db");
-const itemRoutes = require("./routes/items");
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
+const connectDB = require('./config/db');
+const itemRoutes = require('./routes/items');
 
 const app = express();
 
-// 🔥 Ensure uploads folder exists (FIXED PATH)
-const uploadPath = path.join(__dirname, "uploads");
-
+// Ensure uploads folder exists
+const uploadPath = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadPath)) {
   fs.mkdirSync(uploadPath);
 }
@@ -26,14 +27,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Serve uploaded images statically
-app.use("/uploads", express.static(uploadPath));
+app.use('/uploads', express.static(uploadPath));
 
 // ===== ROUTES =====
-app.use("/api/items", itemRoutes);
+app.use('/api/items', itemRoutes);
 
 // ===== TEST ROUTE =====
-app.get("/", (req, res) => {
-  res.send("Lost & Found Backend Running ✅");
+app.get('/', (req, res) => {
+  res.send('Lost & Found Backend Running ✅');
 });
 
 // ===== START SERVER =====
